@@ -239,6 +239,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "swap_used": "100",
       "disk_total": "102400",
       "disk_used": "32000",
+      "disk": {
+        "read_bps": 4096,
+        "write_bps": 2048,
+        "read_iops": 12,
+        "write_iops": 8,
+        "await_ms": 1.5,
+        "util": 3.2
+      },
       "load_avg": "0.10 0.20 0.30",
       "boot_time": "1700000000000",
       "net_rx": "12345678",
@@ -258,8 +266,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
       "processes": "256",
       "tcp_conn": "32",
       "udp_conn": "4",
-      "ip_v4": "1",
-      "ip_v6": "1",
+      "ip_v4": "203.0.113.10",
+      "ip_v6": "2001:db8::10",
       "ping_ct": "23",
       "ping_cu": "25",
       "ping_cm": "30",
@@ -301,6 +309,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `swap_used`      | string\|number | MB  | 是  | Swap 已用                                     |
 | `disk_total`     | string\|number | MB  | 是  | 磁盘总容量                                       |
 | `disk_used`      | string\|number | MB  | 是  | 磁盘已用                                        |
+| `disk`           | object       | -   | 否  | 磁盘 IO 指标。缺失、不是 object，或 6 个子字段全为 0 时，API / WebSocket 不返回 `disk` 字段；存在至少一个非 0 子字段时，缺失或无法解析的子字段按 0 处理。子字段：`read_bps`、`write_bps`、`read_iops`、`write_iops`、`await_ms`、`util` |
 | `load_avg`       | string       | -   | 是  | 三个浮点，空格分隔                                   |
 | `boot_time`      | string\|number | 毫秒  | 是  | 系统启动时间（Unix ms）                             |
 | `net_rx`         | string\|number | 字节  | 是  | 累计接收字节                                      |
@@ -319,8 +328,8 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `processes`      | string\|number | -   | 是  | 进程数                                         |
 | `tcp_conn`       | string\|number | -   | 是  | TCP 活跃连接数                                   |
 | `udp_conn`       | string\|number | -   | 是  | UDP 套接字数                                    |
-| `ip_v4`          | string\|number | -   | 是  | `1`/`0`，IPv4 可达性                            |
-| `ip_v6`          | string\|number | -   | 是  | `1`/`0`，IPv6 可达性                            |
+| `ip_v4`          | string\|number | -   | 是  | 公网 IPv4 地址；`0` 表示不可达；兼容旧探针 `1` 表示可达但未上报地址 |
+| `ip_v6`          | string\|number | -   | 是  | 公网 IPv6 地址；`0` 表示不可达；兼容旧探针 `1` 表示可达但未上报地址 |
 | `ping_ct`        | string\|number\|false\|null | ms  | 否  | 电信节点延时；空值表示未取到，`false` / `"false"` 表示禁用 |
 | `ping_cu`        | string\|number\|false\|null | ms  | 否  | 联通节点延时                                      |
 | `ping_cm`        | string\|number\|false\|null | ms  | 否  | 移动节点延时                                      |
@@ -480,7 +489,7 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
 | `latestReportUpdates` | 每台服务器最近一次批量上报的采样回放数据，用于新页面连续回放；来自 Worker/DO 内存缓存，缓存约 5 分钟，进程重启或 DO 回收后允许为空。REST 响应中的样本统一为 `{ ts, data }`，`data` 按探针批量采样包透传；内置探针默认只在普通采样点上报 `cpu`、`ram_total`、`ram_used`、`swap_total`、`swap_used`、`net_in_speed`、`net_out_speed` |
 | `stats`       | 聚合统计：在线阈值 300 秒（5 分钟无上报视为离线）                                          |
 | `regionStats` | 按 ISO 区域码（大写）统计的服务器数                                                  |
-| `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
+| `sysConfig`   | 当前站点开关：`show_price`、`show_expire`、`show_tf`、`show_time`、`display_mode`。主题配置请从 `/api/config` 的 `theme_options` 读取。~~旧版示例中的 `site_title` 不在该对象内。~~（2026-07-26 修订） |
 
 ***
 
@@ -539,6 +548,14 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
   "swap_used": 100,
   "disk_total": 102400,
   "disk_used": 32000,
+  "disk": {
+    "read_bps": 4096,
+    "write_bps": 2048,
+    "read_iops": 12,
+    "write_iops": 8,
+    "await_ms": 1.5,
+    "util": 3.2
+  },
   "cpu_cores": 4,
   "cpu_info": "Intel(R) Xeon(R) CPU",
   "gpu_info": "[{\"id\":\"0\",\"name\":\"NVIDIA GeForce RTX 3060\",\"info\":12.5}]",
@@ -611,6 +628,20 @@ CORS_ALLOWED_ORIGINS=https://status.example.com,https://admin.example.com
     "ram_used": 3700,
     "disk_total": 102400,
     "disk_used": 32000,
+    "disk_read_bps": 4096,
+    "disk_write_bps": 2048,
+    "disk_read_iops": 12,
+    "disk_write_iops": 8,
+    "disk_await_ms": 1.5,
+    "disk_util": 3.2,
+    "disk": {
+      "read_bps": 4096,
+      "write_bps": 2048,
+      "read_iops": 12,
+      "write_iops": 8,
+      "await_ms": 1.5,
+      "util": 3.2
+    },
     "region": "HK"
   }
 ]
@@ -1538,6 +1569,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `ram_total` / `ram_used`                      | number             | MB                        |
 | `swap_total` / `swap_used`                    | number             | MB                        |
 | `disk_total` / `disk_used`                    | number             | MB                        |
+| `disk`                                        | object             | 磁盘 IO 当前值：`read_bps` / `write_bps` 为 B/s，`read_iops` / `write_iops` 为 ops/s，`await_ms` 为 ms，`util` 为 %；旧探针、旧历史缺失，或 6 个子字段全为 0 时不返回该对象 |
 | `cpu_cores`                                   | number             | 逻辑核心数                     |
 | `cpu_info`                                    | string             | CPU 型号                    |
 | `gpu_info`                                    | array\|string\|null | GPU 列表。实时上报 / WebSocket 可能是 `[{id,name,info}]` 数组；REST 详情和历史接口通常是同结构的 JSON 字符串，其中 `info` 为占用率 |
@@ -1546,8 +1578,8 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | `kernel_version`                              | string             | 内核版本                    |
 | `agent_version`                               | string             | 最新一次上报的探针版本号              |
 | `region`                                      | string             | `request.cf.country` 或 `cf-ipcountry` 的原始值；通常为大写两字母国家/地区代码 |
-| `ip_v4`                                       | string `"0"`/`"1"` | IPv4 可达性                  |
-| `ip_v6`                                       | string `"0"`/`"1"` | IPv6 可达性                  |
+| `ip_v4`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv4 可达性，不暴露公网地址 |
+| `ip_v6`                                       | string `"0"`/`"1"` | 公共 REST 接口仅返回 IPv6 可达性，不暴露公网地址 |
 | `boot_time`                                   | string             | 启动时间（毫秒）                  |
 | `last_updated`                                | number             | 最新指标记录的 `timestamp`（毫秒） |
 | `is_online`                                   | boolean            | 5 分钟内是否有上报（仅 `list` 接口计算） |
@@ -1562,7 +1594,7 @@ UUID 缺失或格式非法时返回 `400 { "error": "invalidServerId", "code": 4
 | 字段          | 类型             | 说明 |
 | ----------- | -------------- | ---- |
 | `timestamp` | number (ms)    | 采样时间 |
-| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, loss_ct, loss_cu, loss_cm, loss_bd, swap_total, swap_used, load_avg, region, kernel_version`；其中 `gpu_info` 通常是 JSON 数组字符串 |
+| 其余字段        | number\|string\|null | 当前 `/api/history/all` 固定返回：`cpu, gpu_info, ram_total, ram_used, disk_total, disk_used, disk_read_bps, disk_write_bps, disk_read_iops, disk_write_iops, disk_await_ms, disk_util, processes, net_in_speed, net_out_speed, tcp_conn, udp_conn, ping_ct, ping_cu, ping_cm, ping_bd, loss_ct, loss_cu, loss_cm, loss_bd, swap_total, swap_used, load_avg, region, kernel_version`；其中 `gpu_info` 通常是 JSON 数组字符串，`disk` 仅在 `disk_*` 历史列存在有效数据时由服务端还原 |
 
 历史行不包含单独的 `gpu` 字段，只包含 `gpu_info`。
 
@@ -1675,6 +1707,7 @@ curl -X POST https://status.example.com/update \
       "cpu":"12.34","ram_total":"8192","ram_used":"3700",
       "swap_total":"2048","swap_used":"100",
       "disk_total":"102400","disk_used":"32000",
+      "disk":{"read_bps":4096,"write_bps":2048,"read_iops":12,"write_iops":8,"await_ms":1.5,"util":3.2},
       "load_avg":"0.10 0.20 0.30","boot_time":"1700000000000",
       "net_rx":"12345678","net_tx":"87654321",
       "net_rx_monthly":"1073741824","net_tx_monthly":"536870912",
@@ -1682,7 +1715,7 @@ curl -X POST https://status.example.com/update \
       "os":"Ubuntu 22.04","arch":"x86_64","kernel_version":"6.8.0-36-generic","cpu_info":"Intel Xeon","cpu_cores":"4",
       "gpu_info":[{"id":"0","name":"NVIDIA GPU","info":12.5}],
       "processes":"256","tcp_conn":"32","udp_conn":"4",
-      "ip_v4":"1","ip_v6":"1",
+      "ip_v4":"203.0.113.10","ip_v6":"2001:db8::10",
       "ping_ct":"23","ping_cu":"25","ping_cm":"30","ping_bd":"40"
     }
   }'

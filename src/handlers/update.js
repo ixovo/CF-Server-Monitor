@@ -1,6 +1,6 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
-import { mergeMetricsIntoServer } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { AGENT_VERSION, loadSiteSettings } from '../utils/settings.js';
@@ -27,7 +27,7 @@ function buildPayloadForBroadcast(id, metrics = {}, extra = {}) {
   payload.agent_version = extra.agentVersion || metrics.agent_version || '';
   payload.last_updated = extra.timestamp || metrics.timestamp || Date.now();
   payload.timestamp = payload.last_updated;
-  return payload;
+  return coerceNumericMetricFields(payload);
 }
 
 // 批量推送：5秒窗口内合并向 DO 推送一次，减少请求次数
@@ -51,14 +51,6 @@ function normalizeAgentVersion(value) {
     .trim()
     .replace(/[^0-9A-Za-z.+_-]/g, '')
     .slice(0, 64);
-}
-
-function getRequestIp(request) {
-  const directIp = request.headers?.get('cf-connecting-ip') || request.headers?.get('x-real-ip') || '';
-  if (directIp) return directIp.trim().slice(0, 128);
-
-  const forwardedFor = request.headers?.get('x-forwarded-for') || '';
-  return forwardedFor.split(',')[0].trim().slice(0, 128);
 }
 
 function createAgentInstructionResponse(body) {
@@ -119,7 +111,7 @@ function buildSamplePayloadForBroadcast(metrics = {}, timestamp = Date.now()) {
   BROADCAST_DELETE_FIELDS.forEach(field => delete payload[field]);
   payload.last_updated = timestamp;
   payload.sample_timestamp = timestamp;
-  return payload;
+  return coerceNumericMetricFields(payload);
 }
 
 function toBroadcastSamples(id, samples, regionCode, agentVersion = '', reportMetrics = null) {
@@ -207,7 +199,6 @@ export async function handleUpdate(request, env, ctx) {
     }
 
     let regionCode = request.cf?.country || request.headers?.get('cf-ipcountry') || '';
-    const ip = getRequestIp(request);
     const agentVersion = normalizeAgentVersion(request.headers.get('X-Agent-Version'));
 
     const serverDetail = await getServerDetail(env.DB, id, true);
@@ -274,8 +265,7 @@ export async function handleUpdate(request, env, ctx) {
       latestMetrics,
       regionCode,
       latestSample.ts,
-      agentVersion,
-      ip
+      agentVersion
     );
 
     const broadcastSamples = toBroadcastSamples(id, samples, regionCode, agentVersion, latestMetrics);

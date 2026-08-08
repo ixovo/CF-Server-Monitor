@@ -4,7 +4,7 @@
 
 **演示地址**：<https://demo.huilang.me/>
 
-**当前Workers版本：V2.8.1 Beta2; Agent版本：1.3.6**
+**当前Workers版本：V2.8.2 Beta2; Agent版本：1.0.1**
 
 > [!IMPORTANT]
 > V2.7.10 加入了 CSP 内容安全策略。Workers 环境通过 HTTP Response Header 下发 CSP，默认只允许同源资源和必要的 Cloudflare/Google Fonts 资源；
@@ -26,7 +26,8 @@
 
 ## Workers 版本更新
 
-- V2.8.1 优化长时间历史查询的 D1 读行，增加服务器负载通知，优化主题商店接口。
+- V2.8.2 新增 GO 版本支持。
+- V2.8.1 优化长时间历史查询的 D1 读行，增加服务器负载通知，优化主题商店接口。主题新增服务器价值统计面板。主题新增Mikus模式。
 - V2.8.0 新增主题商店功能，支持一键切换主题。
 - V2.7 版本进行了全面重构与功能增强：数据库层面将每日清理改为每月表轮换，减少 D1 消耗，同时优化数据结构使写入减半并支持 60+ 服务器监控；新增国内四线路丢包率监控及历史图表、GPU 字段展示、服务器到期提醒、多分区磁盘统计、计费与自动续费、tags/note 字段、iOS Scriptable 小组件等功能；通知层面新增钉钉、OneBot(QQ)、飞书、Bark 支持，并重构告警模块；交互层面新增环形图显示模式、服务器导入导出、批量推送（5秒/批）、服务器参数下发，优化 Ping 统计改为中位数；安全与兼容方面加入 CSP、JWT 自动生成、跨域配置、多站点验证码登录、macOS 修复，并简化安装流程；探针与运维方面优化客户端脚本减少流量消耗，新增 Agent 自动更新（默认关闭）、GitHub 自动同步及 Workers/Agent 版本升级提示，增加 OS 图标显示，压缩定时任务从 4 个减为 2 个以规避免费额度限制，并修复月度任务导致索引丢失等严重 Bug。
 - V2.6 版本重点优化了性能与流量统计体系：将 D1 写入消耗降低 50%，新增月流量统计功能（需后台手动升级数据库并设置重置日期）及月流量校正、首页流量展示；交互层面新增自定义 Ping 设置、上报间隔配置、详情页实时网速展示，并修复启动时间获取错误、TCP/UDP 上报格式问题、网卡流量误统计及 Alpine 环境 UDP 连接数统计错误；部署兼容性方面重构 OpenWrt 安装脚本并新增 OpenRC 服务支持，同时修复方式一部署同步后丢失 API_SECRET 的问题及地图显示异常。部分修复需重新安装脚本生效，2.6.4/2.6.0 升级后务必手动升级数据库结构。
@@ -35,6 +36,12 @@
 
 
 ## Agent 版本更新
+Go版本
+- V1.0.1 新增磁盘IO统计（不支持Windows Mac FreeBSD）
+
+Shell版本
+- V1.3.8 修复 8/9 月账期计算中前导零导致的 Shell 八进制解析错误
+- V1.3.7 添加双栈IP获取
 - V1.3.6 添加指定网卡选项，支持指定一个或多个网卡统计网速和月流量，留空保持。优化硬盘统计逻辑。
 - V1.3.5 各安装脚本新增采样数据中间变量，拆分完整指标和基础采样字段；新增服务器级 `interface` 参数，支持指定一个或多个网卡统计网速和月流量，留空保持自动汇总
 - V1.3.4 添加缓存机制减少资源消耗,新增内核版本指标字段
@@ -235,6 +242,32 @@ https://你的项目名.你的子域.workers.dev/admin
 
 > **注意**：`-collect_interval` 控制本机额外采集频率，`-interval` 控制向 Worker 上报频率。默认 `0` 为兼容模式：不额外采集，只按上报间隔发送单条数据；设置为 `1` 时才会 1 秒采集、按上报间隔批量发送。上报间隔越短，API 调用和数据库写入越多。
 
+### Go 版本探针（可选）
+
+除默认的 Shell 脚本探针外，V2.8.2 起提供 Go 版本探针 `cfsm-agent`，安装后以 `cf-probe` 服务运行，参数与 Shell 版本一致。从后台复制安装命令时可在「探针版本」下拉切换 Shell / Go 版本，Go 版本额外支持 GitHub 代理加速（如 `https://ghfast.top/`）。
+
+Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+Windows（管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+GitHub 下载较慢时，可加上代理前缀（同时作用于脚本下载和 release 下载）：
+
+```bash
+curl -fsSL https://ghfast.top/raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install --install-ghproxy=https://ghfast.top/ -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+```
+
+> **说明**：Go 版本与 Shell 版本参数完全兼容，已安装 Shell 版本的服务器可按上述命令直接覆盖安装切换为 Go 版本。完整参数、安装位置、状态查看与日志说明详见 [agent-go.md](agent-go.md)。
+
 </details>
 
 <details>
@@ -292,6 +325,8 @@ https://你的项目名.你的子域.workers.dev/admin
 
 当有新版本部署成功后，可以通过以下命令升级探针，升级过程会自动保留原有配置：
 
+Shell版本
+
 ```bash
 # Linux
 curl -sL https://你的项目.你的子域.workers.dev/install.sh | bash -s install
@@ -305,7 +340,23 @@ curl -sL https://你的项目.你的子域.workers.dev/install-mac.sh | sudo bas
 irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\cf-server-monitor.ps1 install
 ```
 
-> **V2.7.9 及以上说明**：从 V2.7.8 或更早版本升级后，请重新安装一次探针以启用参数下发能力。之后在后台修改服务器参数会自动下发到探针，无需每次重新安装；受上报间隔和缓存影响，最长约 240 秒才能看到效果。
+Go版本
+
+Linux / OpenWrt / Synology DSM / FreeBSD / macOS：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- install
+```
+
+Windows（管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script install
+```
+
+> Agent带参数下发能力，在后台修改服务器参数（除自动升级外）会自动下发到探针，无需每次重新安装；受上报间隔和缓存影响，最长约 240 秒才能看到效果。
 
 可以在服务器编辑配置中启用自动更新。首次启用，或修改探针上报地址/API_SECRET/开启自动更新，需要重新复制并执行该服务器的安装命令；后续自动更新会沿用本地保存的配置。
 
@@ -313,6 +364,8 @@ irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile
 
 <details>
 <summary>卸载探针</summary>
+
+Shell 版本：
 
 ```bash
 # Linux
@@ -326,6 +379,22 @@ curl -sL https://你的项目.你的子域.workers.dev/install-mac.sh | sudo bas
 # Windows
 irm https://你的项目.你的子域.workers.dev/cf-server-monitor.ps1 -OutFile cf-server-monitor.ps1; powershell -ExecutionPolicy Bypass -File .\cf-server-monitor.ps1 uninstall
 ```
+
+Go 版本（Linux / OpenWrt / Synology DSM / FreeBSD / macOS）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.sh | sudo sh -s -- uninstall
+```
+
+Go 版本（Windows 管理员 PowerShell）：
+
+```powershell
+$script = "$env:TEMP\install-cf-probe.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/huilang-me/cfsm-agent/main/install.ps1" -OutFile $script -UseBasicParsing
+PowerShell -ExecutionPolicy Bypass -File $script uninstall
+```
+
+> **说明**：Go 版本卸载仅清理当前 Go 版默认安装创建的固定位置和自启动项，不处理旧 Shell 脚本或手动放置到其他路径的文件。如使用了 GitHub 代理，可在命令后追加 ` --install-ghproxy=https://ghfast.top/`。
 </details>
 
 <details>
@@ -561,8 +630,11 @@ Workers 环境下 CSP 会放在 HTTP Response Header 中返回，并同时设置
 | 自定义 CSS 主题 | 修改页面样式 | 后台 → 外观 → 自定义脚本 |
 | 自定义 `<head>` | 添加外部 CSS/JS、Meta 标签等 | 后台 → 外观 → 自定义 `<head>` |
 | 背景图片 | 自定义页面背景 | 后台 → 外观 → 背景图片 |
+| Mikus 模式 | 勾选后自动写入 `theme_options.mikus`，开启内置 Mikus 前端配色、加载页、欢迎区与樱花动画 | 后台 → 外观 → 开启 Mikus 模式 |
 | CSP 白名单 | 允许加载的第三方资源域名 | 后台 → 外观 → CSP 设置 |
 | 主题商店 | 选择第三方主题与版本 | 后台 → 主题商店 |
+
+Mikus 模式不会改动数据库结构，仍复用现有 `theme_options` JSON 配置；勾选开关时会写入 `{"mikus":1}`，取消勾选时会移除 `mikus` 参数。视觉来源：[mikus-loli/komari-mikus](https://github.com/mikus-loli/komari-mikus)。
 
 **主题商店与 Workers 反代说明**：
 
@@ -826,6 +898,11 @@ Cloudflare D1 免费版提供 5GB 存储和 5M 读取行/日、100K 写入行/�
 
 1. CF有托管域名的话，绑定一个域名可用解决绝大多数上报问题
 2. 如果没有域名可以绑定，或者绑定域名还是无法访问，可以改本地host解决，本地ping一个cf的cdn ip，改host解析. `echo [ip] [你的项目名.你的子域.workers.dev] | sudo tee -a /etc/hosts`
+
+**Q: Ping结果都是1?**
+
+1. 检查服务器是否开了代理，可以关闭后测试。
+2. 软路由使用openclash会导致延迟测试问题，推荐使用passwall（感谢@chenisme 美馨 提供的解决方案）
 
 </details>
 
