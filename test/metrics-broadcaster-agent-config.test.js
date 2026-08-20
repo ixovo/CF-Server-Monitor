@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
-import { getHistoryMetrics } from '../src/handlers/update.js';
+import { getHistoryMetrics, handleWebSocketUpgrade } from '../src/handlers/update.js';
+import { buildAuthCookie, generateToken } from '../src/middleware/auth.js';
+import { buildResourceAlertNotificationPayloads } from '../src/services/notification.js';
+import { DEFAULT_NOTIFICATION_TEMPLATE, normalizeNotificationTemplate, normalizeResourceAlertRules } from '../src/utils/settings.js';
 
 globalThis.WebSocketRequestResponsePair = class WebSocketRequestResponsePair {
   constructor(request, response) {
@@ -54,12 +57,14 @@ function makeSettingsDb(settingsSource) {
   };
 }
 
-function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 4) {
-  const serialized = schemaVersion >= 4
-    ? `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto`
-    : `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=`;
+function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 5) {
+  const serialized = schemaVersion >= 5
+    ? `collect_interval=2&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2`
+    : schemaVersion >= 4
+      ? `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto`
+      : `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=`;
   const config = {
-    collect_interval: 0,
+    collect_interval: schemaVersion >= 5 ? 2 : 0,
     report_interval: 60,
     reset_day: 1,
     schema_version: schemaVersion,
@@ -72,6 +77,9 @@ function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion 
   if (schemaVersion >= 4) {
     config.connection_mode = 'auto';
   }
+  if (schemaVersion >= 5) {
+    config.wss_report_interval = 2;
+  }
   return {
     serialized,
     md5,
@@ -79,6 +87,85 @@ function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion 
     correction: null
   };
 }
+
+function makeWebSocketUpgradeRequest(url, headers = {}) {
+  return new Request(url, {
+    headers: {
+      Upgrade: 'websocket',
+      ...headers
+    }
+  });
+}
+
+function makeWebSocketEnv(settings, onFetch = null) {
+  return {
+    API_SECRET: 'test-secret',
+    DB: makeSettingsDb(settings),
+    METRICS_BROADCASTER: {
+      idFromName() {
+        return 'global';
+      },
+      get() {
+        return {
+          async fetch(request) {
+            if (onFetch) onFetch(request);
+            return { status: 101 };
+          }
+        };
+      }
+    }
+  };
+}
+
+test('private frontend WebSocket rejects unauthenticated clients', async () => {
+  let forwarded = false;
+  const env = makeWebSocketEnv({ is_public: 'false' }, () => {
+    forwarded = true;
+  });
+
+  const response = await handleWebSocketUpgrade(
+    makeWebSocketUpgradeRequest('https://example.com/api/ws?subscribe=all'),
+    env
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal(forwarded, false);
+});
+
+test('private frontend WebSocket accepts query token auth', async () => {
+  let forwardedUrl = '';
+  const env = makeWebSocketEnv({ is_public: 'false' }, request => {
+    forwardedUrl = request.url;
+  });
+  const token = await generateToken(env, { jwt_secret: 'x'.repeat(32) });
+
+  const response = await handleWebSocketUpgrade(
+    makeWebSocketUpgradeRequest(`https://example.com/api/ws?subscribe=all&token=${encodeURIComponent(token)}`),
+    env
+  );
+
+  assert.equal(response.status, 101);
+  assert.equal(new URL(forwardedUrl).pathname, '/ws');
+});
+
+test('private frontend WebSocket accepts auth cookie', async () => {
+  let forwarded = false;
+  const env = makeWebSocketEnv({ is_public: 'false' }, () => {
+    forwarded = true;
+  });
+  const token = await generateToken(env, { jwt_secret: 'x'.repeat(32) });
+  const cookie = buildAuthCookie(new Request('https://example.com/admin'), token);
+
+  const response = await handleWebSocketUpgrade(
+    makeWebSocketUpgradeRequest('https://example.com/api/ws?subscribe=all', {
+      Cookie: cookie
+    }),
+    env
+  );
+
+  assert.equal(response.status, 101);
+  assert.equal(forwarded, true);
+});
 
 test('WSS agent config state only requests ack for fields in current report', () => {
   const broadcaster = makeBroadcaster();
@@ -136,15 +223,15 @@ test('WSS agent standard WebSocket adapter preserves attachment state', async ()
   assert.equal(broadcaster.standardAgentWebSocketCount, 0);
 });
 
-test('WSS agent ack suggests realtime or idle report interval', () => {
+test('WSS agent ack suggests configured realtime or idle report interval', () => {
   const broadcaster = makeBroadcaster();
-  assert.equal(broadcaster._getAgentNextWssReportAfterMs(60000, true), 4000);
-  assert.equal(broadcaster._getAgentNextWssReportAfterMs(60000, false), 8000);
-  assert.equal(broadcaster._getAgentNextWssReportAfterMs(120000, false), 16000);
-  assert.equal(broadcaster._getAgentNextWssReportAfterMs(180000, false), 24000);
-  assert.equal(broadcaster._getAgentNextWssReportAfterMs(30000, true), 2000);
+  assert.equal(broadcaster._getAgentNextWssReportAfterMs(4000, 60000, true), 4000);
+  assert.equal(broadcaster._getAgentNextWssReportAfterMs(4000, 30000, false), 60000);
+  assert.equal(broadcaster._getAgentNextWssReportAfterMs(10_000, 120000, false), 120000);
+  assert.equal(broadcaster._getAgentNextWssReportAfterMs(1000, 60000, true), 1000);
+  assert.equal(broadcaster._getAgentNextWssReportAfterMs(3000, 60000, true), 3000);
   assert.equal(
-    broadcaster._getAgentNextWssReportAfterMs(30000, {
+    broadcaster._getAgentNextWssReportAfterMs(3000, 30000, {
       frontendActive: false,
       resourceAlertActive: true,
       realtimeActive: true
@@ -152,7 +239,7 @@ test('WSS agent ack suggests realtime or idle report interval', () => {
     60000
   );
   assert.equal(
-    broadcaster._getAgentNextWssReportAfterMs(120000, {
+    broadcaster._getAgentNextWssReportAfterMs(10_000, 120000, {
       frontendActive: false,
       resourceAlertActive: true,
       realtimeActive: true
@@ -160,7 +247,7 @@ test('WSS agent ack suggests realtime or idle report interval', () => {
     120000
   );
   assert.equal(
-    broadcaster._getAgentNextWssReportAfterMs(60000, {
+    broadcaster._getAgentNextWssReportAfterMs(4000, 120000, {
       frontendActive: true,
       resourceAlertActive: true,
       realtimeActive: true
@@ -197,7 +284,7 @@ test('frontend realtime hint pushes active interval to connected agents', async 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'ack');
   assert.equal(sent[0].realtimeHint, true);
-  assert.equal(sent[0].nextWssReportAfterMs, 2000);
+  assert.equal(sent[0].nextWssReportAfterMs, 30000);
 });
 
 test('WSS agent context uses current report interval from payload', async () => {
@@ -213,7 +300,7 @@ test('WSS agent context uses current report interval from payload', async () => 
     serverId: 'server-1',
     historyPartitionId: 42,
     reportIntervalMs: 60000,
-    configSchema: '4',
+    configSchema: '5',
     configMd5: 'none'
   }, {
     id: 'server-1',
@@ -221,7 +308,9 @@ test('WSS agent context uses current report interval from payload', async () => 
   });
 
   assert.equal(context.reportIntervalMs, 120000);
+  assert.equal(context.wssReportIntervalMs, 2000);
   assert.equal(serialized.reportIntervalMs, 120000);
+  assert.equal(serialized.wssReportIntervalMs, 2000);
 });
 
 test('WSS agent config ack is skipped when report omits config state', async () => {
@@ -238,7 +327,7 @@ test('WSS agent config ack is skipped when report omits config state', async () 
       configMd5: 'none'
     },
     serverId: 'server-1',
-    agentConfig: { schema: '4', md5: 'none', requested: false }
+    agentConfig: { schema: '5', md5: 'none', requested: false }
   });
 
   assert.equal(loads, 0);
@@ -256,7 +345,7 @@ test('WSS agent config ack is built when report includes config state', async ()
   const ack = await broadcaster._buildAgentConfigAck({
     attachment: {},
     serverId: 'server-1',
-    agentConfig: { schema: '4', md5: 'none', requested: true }
+    agentConfig: { schema: '5', md5: 'none', requested: true }
   });
 
   assert.equal(loads, 1);
@@ -269,6 +358,26 @@ test('WSS agent config ack is built when report includes config state', async ()
   assert.equal(Object.prototype.hasOwnProperty.call(ack, 'config'), false);
 });
 
+test('WSS schema 4 agent with matching legacy MD5 does not receive config again', async () => {
+  const descriptor = makeDescriptor('dddddddddddddddddddddddddddddddd', 4);
+  const broadcaster = makeBroadcaster();
+  broadcaster._loadAgentConfigDescriptor = async (_serverId, _forceRefresh, schemaVersion) => {
+    assert.equal(schemaVersion, 4);
+    return descriptor;
+  };
+
+  const ack = await broadcaster._buildAgentConfigAck({
+    attachment: {},
+    serverId: 'server-1',
+    agentConfig: { schema: '4', md5: descriptor.md5, requested: true }
+  });
+
+  assert.equal(ack.has_config, false);
+  assert.equal(ack.config_md5, descriptor.md5);
+  assert.equal(Object.prototype.hasOwnProperty.call(ack, 'body'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(ack, 'payload'), false);
+});
+
 test('WSS agent config push uses string body and structured payload', () => {
   const sent = [];
   const ws = {
@@ -277,7 +386,7 @@ test('WSS agent config push uses string body and structured payload', () => {
         kind: 'agent-report',
         authenticated: true,
         serverId: 'server-1',
-        configSchema: '4',
+        configSchema: '5',
         configMd5: 'none'
       };
     },
@@ -317,7 +426,8 @@ test('WSS agent config push keeps legacy schema without connection mode', () => 
   };
   const broadcaster = makeBroadcaster([ws]);
   const descriptors = new Map([
-    [4, makeDescriptor('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 4)],
+    [5, makeDescriptor('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 5)],
+    [4, makeDescriptor('dddddddddddddddddddddddddddddddd', 4)],
     [3, makeDescriptor('cccccccccccccccccccccccccccccccc', 3)]
   ]);
 
@@ -503,6 +613,73 @@ test('resource alert batch evaluation returns results per rule', async () => {
   assert.deepEqual(byRule.get('cpu-rule').evaluatedServerIds, ['server-1']);
   assert.equal(byRule.get('ram-rule').alerts.length, 0);
   assert.deepEqual(byRule.get('ram-rule').evaluatedServerIds, ['server-1']);
+});
+
+test('resource alert notification payloads group metrics by server and split long batches', () => {
+  const alertNodes = [];
+  alertNodes.push({
+    rule: { name: 'CPU Alert', intervalMinutes: '5' },
+    server: { name: 'shared-server' },
+    alert: {
+      mode: 'average',
+      metrics: [{ metric: 'cpu', mode: 'average', threshold: 1, current: 1.05, triggerValue: 1.05 }]
+    }
+  });
+  alertNodes.push({
+    rule: { name: 'RAM Alert', intervalMinutes: '5' },
+    server: { name: 'shared-server' },
+    alert: {
+      mode: 'average',
+      metrics: [{ metric: 'ram', mode: 'average', threshold: 1, current: 42.7, triggerValue: 42.7 }]
+    }
+  });
+  for (let index = 0; index < 180; index++) {
+    alertNodes.push({
+      rule: { name: 'RAM Alert', intervalMinutes: '5' },
+      server: { name: `ram-server-${String(index).padStart(2, '0')}` },
+      alert: {
+        mode: 'average',
+        metrics: [{ metric: 'ram', mode: 'average', threshold: 1, current: 80, triggerValue: 80 }]
+      }
+    });
+  }
+  alertNodes.push({
+    rule: { name: 'CPU Alert', intervalMinutes: '5' },
+    server: { name: 'cpu-server' },
+    alert: {
+      mode: 'average',
+      metrics: [{ metric: 'cpu', mode: 'average', threshold: 1, current: 90, triggerValue: 90 }]
+    }
+  });
+
+  const payloads = buildResourceAlertNotificationPayloads(alertNodes, [], '2026/08/20 12:00:00');
+
+  assert.equal(payloads.length > 1, true);
+  assert.equal(payloads.some(payload => payload.msg.includes('shared-server  CPU 1.05%  RAM 42.7%')), true);
+  assert.equal(payloads.some(payload => payload.msg.includes('cpu-server  CPU 90.0%')), true);
+  assert.equal(payloads.every(payload => payload.msg.length <= 3200), true);
+});
+
+test('legacy default notification template normalizes to concise default', () => {
+  const legacy = '{{emoji}}【CF Server Monitor】{{event}}\n服务器: {{client}}\n详情:\n{{message}}\n时间: {{time}}';
+  const previousConcise = '{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n时间: {{time}}';
+  assert.equal(normalizeNotificationTemplate(legacy), DEFAULT_NOTIFICATION_TEMPLATE);
+  assert.equal(normalizeNotificationTemplate(previousConcise), DEFAULT_NOTIFICATION_TEMPLATE);
+  assert.equal(DEFAULT_NOTIFICATION_TEMPLATE.includes('服务器:'), false);
+  assert.equal(DEFAULT_NOTIFICATION_TEMPLATE.includes('时间:'), false);
+  assert.equal(DEFAULT_NOTIFICATION_TEMPLATE.includes('{{message}}'), true);
+});
+
+test('resource alert rule ids remain unique when duplicate ids are already max length', () => {
+  const id = 'a'.repeat(64);
+  const rules = normalizeResourceAlertRules([
+    { id, metric: 'cpu', threshold: 80, servers: ['server-1'], intervalMinutes: 5 },
+    { id, metric: 'ram', threshold: 80, servers: ['server-1'], intervalMinutes: 5 }
+  ]);
+
+  assert.equal(rules.length, 2);
+  assert.notEqual(rules[0].id, rules[1].id);
+  assert.equal(rules.every(rule => rule.id.length <= 64), true);
 });
 
 test('resource alert cache accepts payload samples from WSS broadcasts', async () => {
