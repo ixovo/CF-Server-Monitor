@@ -72,7 +72,7 @@
         <img class="mikus-stats-mascot-img" :src="mikusAsset('QWQ.webp')" alt="">
       </div>
       <div class="stat-item">
-        <div class="stat-label">{{ trans.totalServers }}</div>
+        <div class="stat-label">{{ trans.servers }}</div>
         <div class="stat-main-value stat-main-value-sm stat-sub-info">
           <span class="stat-online-color">{{ trans.online }}:{{ stats.online }}</span> |
           <span class="stat-offline-color">{{ trans.offline }}:{{ stats.offline }}</span>
@@ -89,9 +89,8 @@
           <span class="stat-net-up-color">↑ {{ formatBytes(stats.globalSpeedOut) }}/s</span>
         </div>
       </div>
-      <button
+      <div
         v-if="sysConfig.show_price"
-        type="button"
         class="stat-item stat-action-item"
         @click="financeModalOpen = true"
       >
@@ -100,7 +99,7 @@
           {{ formattedRemainingValue.symbol }}{{ formattedRemainingValue.value }}
           <span class="finance-currency-code">{{ formattedRemainingValue.currency }}</span>
         </div>
-      </button>
+      </div>
     </div>
 
     <div id="view-card" class="view-panel" :class="{ active: isCardView }">
@@ -139,6 +138,7 @@
               <th>{{ trans.ram }}</th>
               <th>{{ trans.disk }}</th>
               <th>{{ trans.use }}</th>
+              <th class="table-col-conn">TCP/UDP</th>
               <th width="95">{{ trans.dl }}</th>
               <th width="95">{{ trans.ul }}</th>
               <th width="70">{{ trans.update }}</th>
@@ -146,13 +146,13 @@
           </thead>
           <tbody>
             <tr v-if="isLoading">
-              <td class="table-empty-state">
+              <td class="table-empty-state" colspan="12">
                 <div class="loading-spinner-small"></div>
                 <span>$ {{ trans.loading }}</span>
               </td>
             </tr>
             <tr v-else-if="filteredServers.length === 0">
-              <td class="table-empty-state">[*] {{ trans.noData }}</td>
+              <td class="table-empty-state" colspan="12">[*] {{ trans.noData }}</td>
             </tr>
             <tr 
               v-for="server in filteredServers" 
@@ -164,22 +164,25 @@
               <td class="table-center-cell">
                 <div class="status-indicator table-status-indicator-inline" :style="{ background: getStatusColor(server) }"></div>
               </td>
-              <td><b>{{ server.name }}</b></td>
+              <td><b class="table-server-name">{{ server.name }}</b></td>
               <td>
                 <span v-if="server.region && server.region !== 'xx'" class="country-os-icons">
                   <img :src="getPublicAssetUrl('flags/' + getFlagRegionCode(server.region) + '.svg')" :alt="server.region" class="flag-img">
-                  <OsIcon :os="server.os" />
                 </span>
                 <span v-else class="country-os-icons">
                   <span class="flag-fallback">🏳️</span>
-                  <OsIcon :os="server.os" />
                 </span>
                 {{ (server.region || 'XX').toUpperCase() }}
               </td>
-              <td><span class="os-label">{{ server.os || 'N/A' }} / {{ server.arch || 'N/A' }} </span></td>
+              <td>
+                <span class="table-system-info">
+                  <OsIcon :os="server.os" />
+                  <span class="os-label">{{ formatSystemOs(server.os) }} / {{ server.arch || 'N/A' }} </span>
+                </span>
+              </td>
               <td>
                 <div class="table-stat">
-                  <div class="stat-bar-container stat-bar-small">
+                  <div class="stat-bar-container stat-bar-small table-usage-bar">
                   <div class="stat-bar-fill" :style="{ width: (parseFloat(server.cpu) || 0) + '%', background: getUsageColor(parseFloat(server.cpu) || 0) }"></div>
                 </div>
                   <span>{{ (parseFloat(server.cpu) || 0).toFixed(1) }}%</span>
@@ -187,7 +190,7 @@
               </td>
               <td>
                 <div class="table-stat">
-                  <div class="stat-bar-container" style="width:60px;">
+                  <div class="stat-bar-container table-usage-bar">
                     <div class="stat-bar-fill" :style="{ width: (server.ram_total > 0 ? ((server.ram_used / server.ram_total) * 100).toFixed(2) : 0) + '%', background: getUsageColor(server.ram_total > 0 ? ((server.ram_used / server.ram_total) * 100) : 0) }"></div>
                   </div>
                   <span>{{ server.ram_total > 0 ? ((server.ram_used / server.ram_total) * 100).toFixed(2) : '0.00' }}%</span>
@@ -195,7 +198,7 @@
               </td>
               <td>
                 <div class="table-stat">
-                  <div class="stat-bar-container" style="width:60px;">
+                  <div class="stat-bar-container table-usage-bar">
                     <div class="stat-bar-fill" :style="{ width: (server.disk_total > 0 ? ((server.disk_used / server.disk_total) * 100).toFixed(2) : 0) + '%', background: getUsageColor(server.disk_total > 0 ? ((server.disk_used / server.disk_total) * 100) : 0) }"></div>
                   </div>
                   <span>{{ server.disk_total > 0 ? ((server.disk_used / server.disk_total) * 100).toFixed(2) : '0.00' }}%</span>
@@ -203,13 +206,16 @@
               </td>
               <td v-if="sysConfig.show_tf && server.traffic_limit">
                 <div class="table-stat">
-                  <div class="stat-bar-container stat-bar-small">
+                    <div class="stat-bar-container stat-bar-small table-usage-bar">
                     <div class="stat-bar-fill" :style="{ width: Math.min(100, calcTrafficUsagePercent(server)) + '%', background: getUsageColor(calcTrafficUsagePercent(server)) }"></div>
                   </div>
                   <span>{{ calcTrafficUsagePercent(server).toFixed(1) }}%</span>
                 </div>
               </td>
               <td v-else>-</td>
+              <td class="table-conn-cell">
+                <span class="conn-pair">{{ formatConnPair(server) }}</span>
+              </td>
               <td>{{ formatBytes(server.net_in_speed) }}/s</td>
               <td>{{ formatBytes(server.net_out_speed) }}/s</td>
               <td class="update-time label-small">{{ getUpdateTime(server.last_updated) }}</td>
@@ -348,6 +354,7 @@ const sysConfig = ref({
   show_price: true,
   show_expire: true,
   show_tf: true,
+  show_three_net_details: false,
   frontend_ws_timeout_minutes: normalizeLiveSocketTimeoutMinutes(appConfig?.frontend_ws_timeout_minutes),
   display_mode: 'bar',
   site_title: DEFAULT_SITE_TITLE,
@@ -497,6 +504,24 @@ const setFilter = (code) => {
 
 const getStatusColor = (server) => {
   return isServerOnline(server) ? 'var(--accent-green)' : 'var(--accent-red)'
+}
+
+const formatConnCount = (value) => {
+  const number = Number.parseInt(value, 10)
+  if (!Number.isFinite(number) || number < 0) return '0'
+  return number.toLocaleString('en-US')
+}
+
+const formatConnPair = (server) => `${formatConnCount(server.tcp_conn)} / ${formatConnCount(server.udp_conn)}`
+
+const formatSystemOs = (value) => {
+  const raw = String(value || '').trim()
+  if (!raw) return 'N/A'
+  return raw
+    .replace(/\s+gnu\/linux(?=\s|$)/gi, '')
+    .replace(/\s+linux(?=\s|$)/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim() || raw
 }
 
 const getUpdateTime = (lastUpdated) => {
@@ -802,6 +827,7 @@ const refreshData = async () => {
           show_price: data.sysConfig?.show_price ?? true,
           show_expire: data.sysConfig?.show_expire ?? true,
           show_tf: data.sysConfig?.show_tf ?? true,
+          show_three_net_details: data.sysConfig?.show_three_net_details ?? false,
           frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
           display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
           site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
@@ -839,6 +865,7 @@ const refreshData = async () => {
       show_price: data.sysConfig?.show_price ?? true,
       show_expire: data.sysConfig?.show_expire ?? true,
       show_tf: data.sysConfig?.show_tf ?? true,
+      show_three_net_details: data.sysConfig?.show_three_net_details ?? false,
       frontend_ws_timeout_minutes: sysConfig.value.frontend_ws_timeout_minutes,
       display_mode: normalizeDisplayMode(data.sysConfig?.display_mode),
       site_title: sysConfig.value.site_title || DEFAULT_SITE_TITLE,
